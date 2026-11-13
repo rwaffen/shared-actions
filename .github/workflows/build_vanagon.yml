@@ -204,6 +204,41 @@ jobs:
           ref: ${{ inputs.ref }}
           fetch-depth: 0 # So we fetch all history and tags and can build non-tagged versions
 
+      - name: Prepare Cygwin Bundler cache
+        if: startsWith(matrix.platform, 'windows-all')
+        id: cygwin-bundle-cache
+        working-directory: ${{ inputs.working_directory }}
+        env:
+          CACHE_RUNNER: ${{ matrix.runner }}
+          CACHE_ARCH: ${{ runner.arch }}
+        run: |
+          # Cache installed gems, including native extensions, in a dedicated
+          # directory. Bundler finds the Gemfile in this directory or a parent.
+          bundle config set --local path "$(cygpath -u "${GITHUB_WORKSPACE}")/.bundle-cache"
+          # Resolve before restoring gems so a cached Git checkout cannot pin a
+          # moving dependency such as vanagon#main to an older revision.
+          bundle lock
+          lock_hash=$(ruby -rbundler -rdigest -e 'puts Digest::SHA256.file(Bundler.default_lockfile).hexdigest')
+          # Cygwin updates Ruby and native libraries independently of the runner
+          # image. Never reuse compiled gems across different toolchains.
+          runtime_hash=$({ ruby -v; bundle --version; cygcheck -cd; gcc --version; } | sha256sum | cut -d ' ' -f 1)
+          ruby_version=$(ruby -e 'print RUBY_VERSION')
+          cache_prefix="cygwin-gems-v1-${CACHE_RUNNER}-${CACHE_ARCH}-ruby-${ruby_version}-env-${runtime_hash}-deps-"
+          echo "prefix=${cache_prefix}" >> "${GITHUB_OUTPUT}"
+          echo "key=${cache_prefix}${lock_hash}" >> "${GITHUB_OUTPUT}"
+
+      - name: Restore Cygwin Bundler cache
+        if: startsWith(matrix.platform, 'windows-all')
+        id: restore-cygwin-bundle
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: ${{ github.workspace }}/.bundle-cache
+          key: ${{ steps.cygwin-bundle-cache.outputs.key }}
+          # Reuse compatible native gems when dependencies change; bundle
+          # install below still installs the versions in this run's lockfile.
+          restore-keys: |
+            ${{ steps.cygwin-bundle-cache.outputs.prefix }}
+
       - name: Bundle install
         working-directory: ${{ inputs.working_directory }}
         env:
@@ -214,6 +249,13 @@ jobs:
         run: |
           bundle install --retry=3
           bundle env
+
+      - name: Save Cygwin Bundler cache
+        if: startsWith(matrix.platform, 'windows-all') && steps.restore-cygwin-bundle.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: ${{ github.workspace }}/.bundle-cache
+          key: ${{ steps.cygwin-bundle-cache.outputs.key }}
 
       # from https://github.com/Sharpie/puppet-build-experiment/blob/master/resources/bolt/tasks/configure_builder.sh#L3-L14
       - name: Force docker into 32bit mode

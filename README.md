@@ -60,6 +60,15 @@ That token needs permission to force-push the mirrored branches and tags under
 the repository's branch and tag protection rules.
 The workflow fetches and pushes the upstream branches and tags on every run.
 
+### Vanagon build cache
+
+The `build_vanagon.yml` workflow caches installed Bundler gems, including native extensions, for `windows-all` Cygwin builds.
+It resolves dependencies before restoring the cache and always runs `bundle install` afterwards.
+The cache key includes the runner, architecture, Ruby, Bundler, installed Cygwin package versions, compiler and resolved lockfile.
+When dependencies change, it can reuse gems from a cache with the same runner and toolchain.
+Only the dedicated `.bundle-cache` directory is cached; lockfiles, Bundler configuration and build outputs are not cached.
+The cache is saved after a successful Bundler installation, even if a later build step fails.
+
 ### Beaker Acceptance action:
 
 The `/.github/workflows/beaker_acceptance.yml` is a reusable workflow
